@@ -1,5 +1,5 @@
 GO_FILES := $(shell find . -name "*.go" ! -name "*_test.go" -type f)
-OUTPUT_EXE := create_go_project
+OUTPUT_EXE := go_project_creator
 
 ifdef OS
 	OUTPUT_EXE := $(OUTPUT_EXE).exe

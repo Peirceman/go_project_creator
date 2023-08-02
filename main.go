@@ -372,7 +372,7 @@ func makeProjectDir() {
 	printlnC("{blue}Info:{reset} creating project directory")
 
 	if dir == "" {
-		dir = scanLine("Enter project directory: ")
+		dir = scanLine("Enter project directory name: ")
 	}
 
 	if exists(dir) {
