@@ -3,8 +3,12 @@
 creates a simple go project
 
 ## usage
+You can just install it.
+```console
+ $ go install github.com/Peirceman/go_project_creator@latest
+```
 
-just compile it with make:
+Or you can download the source code and compile, either it with make:
 ``` console
  $ make
 ```
