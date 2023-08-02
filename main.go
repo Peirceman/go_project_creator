@@ -49,8 +49,8 @@ func setOptions() {
 
 	flag.StringVar(&moduleUrl, "module-url", "", "url of the go module")
 	flag.StringVar(&exeName, "executable-name", "", "name of the output executable")
-	flag.StringVar(&remoteUrl, "remote-url", "", "url of the git remote.\nThis option sets do-git to true")
-	flag.StringVar(&remoteName, "remote-name", "", "name of the git remote.\nThis option sets do-git to true")
+	flag.StringVar(&remoteUrl, "git-remote-url", "", "url of the git remote.\nThis option sets do-git to true")
+	flag.StringVar(&remoteName, "git-remote-name", "", "name of the git remote.\nThis option sets do-git to true")
 	flag.StringVar(&onWarnOpt, "on-warning", "Prompt",
 		`What to do on a warning, one of:
     	Prompt: prompt for wether to continue or not
@@ -502,6 +502,9 @@ func makeProjectDir() {
 			ePrintlnC("{red}Error checking contents of directory:", err2.Error(), "{reset}")
 			os.Exit(1)
 		}
+
+		os.Chdir(dir)
+		return
 	}
 
 	err := os.Mkdir(dir, os.ModeDir)
