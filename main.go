@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"errors"
+	"flag"
 	"fmt"
 	"io/fs"
 	"os"
@@ -16,6 +17,10 @@ var colorStderr bool
 var dir string
 var moduleUrl string
 var exeName string
+var remoteName string
+var remoteUrl string
+var doGit, doGitRemote, doGitignore, doMakefile *bool
+var onWarn int // What to do on a warning, 0: prompt, 1: continue, 2: stop
 
 func scanLine(prompt string) string {
 	fmt.Print(prompt)
@@ -37,6 +42,116 @@ func setOptions() {
 	} else {
 		colorStderr = false
 	}
+
+	var doGitOpt, doGitignoreOpt, doMakefileOpt bool
+	var noDoGitOpt, noDoGitignoreOpt, noDoMakefileOpt bool
+	var onWarnOpt string
+
+	flag.StringVar(&moduleUrl, "module-url", "", "url of the go module")
+	flag.StringVar(&exeName, "executable-name", "", "name of the output executable")
+	flag.StringVar(&remoteUrl, "remote-url", "", "url of the git remote.\nThis option sets do-git to true")
+	flag.StringVar(&remoteName, "remote-name", "", "name of the git remote.\nThis option sets do-git to true")
+	flag.StringVar(&onWarnOpt, "on-warning", "Prompt",
+		`What to do on a warning, one of:
+    Prompt: prompt for wether to continue or not
+    Continue: ignore warning and continue
+    Stop: stop the current opperation`)
+
+	flag.BoolVar(&doGitOpt, "do-git", false, "sets that a git repository should be created")
+	flag.BoolVar(&doGitignoreOpt, "do-gitignore", false, "sets that the gitignore should be created.\nThis option sets do-git to true")
+	flag.BoolVar(&doMakefileOpt, "do-makefile", false, "sets that a Makefile should be created")
+	flag.BoolVar(&noDoGitOpt, "no-do-git", false, "sets that a git repository should not be created")
+	flag.BoolVar(&noDoGitignoreOpt, "no-do-gitignore", false, "sets that the gitignore should not be created.")
+	flag.BoolVar(&noDoMakefileOpt, "no-do-makefile", false, "sets that a Makefile should not be created")
+
+	flag.Usage = func() {
+		fmt.Fprintf(os.Stderr, "Usage: %s [options] [project_dir]\nOptions:\n", os.Args[0])
+		flag.PrintDefaults()
+		fmt.Fprintln(os.Stderr, "\nNo options are required, if anything isn't known input is asked on stdin")
+		fmt.Fprintln(os.Stderr, "The program will error and exit if conflicting arguments are given.")
+	}
+
+	flag.Parse()
+	exeName, _ = strings.CutSuffix(exeName, ".exe")
+
+	switch strings.ToLower(onWarnOpt) {
+	case "prompt":
+		onWarn = 0
+	case "continue":
+		onWarn = 1
+	case "stop":
+		onWarn = 2
+	default:
+		ePrintlnC("{red}Error: unkown action on warning `" + onWarnOpt + "`{reset}")
+		flag.Usage()
+		os.Exit(1)
+	}
+
+	var effectiveDoGit *bool = nil
+	True, False := true, false
+
+	if remoteUrl != "" || remoteName != "" {
+		effectiveDoGit = &True
+		doGitRemote = &True
+	}
+
+	if doGitOpt {
+		effectiveDoGit = &True
+	}
+
+	if noDoGitOpt {
+		if effectiveDoGit == &True {
+			ePrintlnC("{red}Error: conflicting commandline arguments given{reset}")
+			flag.Usage()
+			os.Exit(1)
+		}
+
+		effectiveDoGit = &False
+	}
+
+	if doGitignoreOpt {
+		if effectiveDoGit == &False {
+			ePrintlnC("{red}Error: conflicting commandline arguments given{reset}")
+			flag.Usage()
+			os.Exit(1)
+		}
+
+		effectiveDoGit = &True
+		doGitignore = &True
+	}
+
+	if noDoGitignoreOpt {
+		if effectiveDoGit == &True {
+			ePrintlnC("{red}Error: conflicting commandline arguments given{reset}")
+			flag.Usage()
+			os.Exit(1)
+		}
+
+		effectiveDoGit = &False
+		doGitignore = &False
+	}
+
+	if doMakefileOpt {
+		doMakefile = &True
+	}
+
+	if noDoMakefileOpt {
+		if doMakefile == &True {
+			ePrintlnC("{red}Error: conflicting commandline arguments given{reset}")
+			flag.Usage()
+			os.Exit(1)
+		}
+
+		doMakefile = &False
+	}
+
+	doGit = effectiveDoGit
+
+	if len(flag.Args()) == 0 {
+		return
+	}
+
+	dir = flag.Arg(0)
 }
 
 func printCmd(cmd *exec.Cmd) {
@@ -64,19 +179,32 @@ func exists(path string) bool {
 }
 
 func makeMakefile() {
+	if doMakefile == nil {
+		answer := scanLine("Do you want to make a Makefile? (Y/N) ")
+		if answer[0] == 'N' || answer[0] == 'n' {
+			return
+		}
+	} else if !*doMakefile {
+		return
+	}
+
 	printlnC("{blue}Info:{reset} creating Makefile")
 
 	if exists("Makefile") {
 		contents, err := os.ReadFile("Makefile")
 		if err != nil {
-			printlnC("{red}Error checking contents of Makefile:", err.Error(), "{reset}")
+			ePrintlnC("{red}Error checking contents of Makefile:", err.Error(), "{reset}")
 			return
 		}
 
 		if len(contents) > 0 {
-			printlnC("{yellow}Warning: Makefile already exists and is not empty{reset}")
-			answer := scanLine("Do you want to override it? (Y/N) ")
-			if answer[0] != 'Y' && answer[0] != 'y' {
+			if onWarn == 0 {
+				printlnC("{yellow}Warning: Makefile already exists and is not empty{reset}")
+				answer := scanLine("Do you want to override it? (Y/N) ")
+				if answer[0] != 'Y' && answer[0] != 'y' {
+					return
+				}
+			} else if onWarn == 2 {
 				return
 			}
 		}
@@ -88,7 +216,10 @@ func makeMakefile() {
 		return
 	}
 
-	exeName, _ = strings.CutSuffix(scanLine("Executable name: "), ".exe")
+	if exeName == "" {
+		exeName, _ = strings.CutSuffix(scanLine("Executable name: "), ".exe")
+	}
+
 	writer := bufio.NewWriter(file)
 
 	writer.WriteString("# generated by go_project_creator: https://github.com/Peirceman/go_project_creator\n\n")
@@ -119,8 +250,12 @@ func runCmd(name string, args ...string) error {
 }
 
 func makeGitRepo() {
-	answer := scanLine("Do you want to make a git repository? (Y/N) ")
-	if answer[0] == 'N' || answer[0] == 'n' {
+	if doGit == nil {
+		answer := scanLine("Do you want to make a git repository? (Y/N) ")
+		if answer[0] == 'N' || answer[0] == 'n' {
+			return
+		}
+	} else if !*doGit {
 		return
 	}
 
@@ -137,18 +272,27 @@ func makeGitRepo() {
 }
 
 func addGitRemote() {
-	answer := scanLine("Do you want to add a remote? (Y/N) ")
-	if answer[0] != 'Y' && answer[0] != 'y' {
+	if doGitRemote == nil {
+		answer := scanLine("Do you want to add a remote? (Y/N) ")
+		if answer[0] != 'Y' && answer[0] != 'y' {
+			return
+		}
+	} else if !*doGitRemote {
 		return
 	}
 
-	remoteName := scanLine("Enter remote name: (empty for origin) ")
 	if remoteName == "" {
-		remoteName = "origin"
+		remoteName = scanLine("Enter remote name: (empty for origin) ")
+		if remoteName == "" {
+			remoteName = "origin"
+		}
 	}
-	remoteUrl := scanLine("Enter remote url: (empty for " + moduleUrl + ") ")
+
 	if remoteUrl == "" {
-		remoteUrl = moduleUrl
+		remoteUrl = scanLine("Enter remote url: (empty for " + moduleUrl + ") ")
+		if remoteUrl == "" {
+			remoteUrl = moduleUrl
+		}
 	}
 
 	err := runCmd("git", "remote", "add", remoteName, remoteUrl)
@@ -158,8 +302,12 @@ func addGitRemote() {
 }
 
 func makeGitIgnore() {
-	answer := scanLine("Do you want to add a gitignore? (Y/N) ")
-	if answer[0] != 'Y' && answer[0] != 'y' {
+	if doGitignore == nil {
+		answer := scanLine("Do you want to add a gitignore? (Y/N) ")
+		if answer[0] != 'Y' && answer[0] != 'y' {
+			return
+		}
+	} else if !*doGitignore {
 		return
 	}
 
@@ -173,9 +321,13 @@ func makeGitIgnore() {
 		}
 
 		if len(contents) > 0 {
-			printlnC("{yellow}Warning: gitignore already exists and is not empty{reset}")
-			answer := scanLine("Do you want to override it? (Y/N) ")
-			if answer[0] != 'Y' && answer[0] != 'y' {
+			if onWarn == 0 {
+				printlnC("{yellow}Warning: gitignore already exists and is not empty{reset}")
+				answer := scanLine("Do you want to override it? (Y/N) ")
+				if answer[0] != 'Y' && answer[0] != 'y' {
+					return
+				}
+			} else if onWarn == 2 {
 				return
 			}
 		}
@@ -187,10 +339,14 @@ func makeGitIgnore() {
 		return
 	}
 
+	if exeName == "" {
+		exeName, _ = strings.CutSuffix(scanLine("Executable name: "), ".exe")
+	}
+
 	writer := bufio.NewWriter(file)
-	writer.WriteString("# generated by go_project_creator: https://github.com/Peirceman/go_project_creator\n\n")
+	writer.WriteString("# generated by go_project_creator: https://github.com/Peirceman/go_project_creator\n\n/")
 	writer.WriteString(exeName)
-	writer.WriteString("\n")
+	writer.WriteString("\n/")
 	writer.WriteString(exeName)
 	writer.WriteString(".exe\n")
 	writer.Flush()
@@ -200,7 +356,9 @@ func makeGitIgnore() {
 
 func makeModule() {
 	printlnC("{blue}Info:{reset} creating module")
-	moduleUrl = scanLine("Enter module url: ")
+	if moduleUrl == "" {
+		moduleUrl = scanLine("Enter module url: ")
+	}
 
 	err := runCmd("go", "mod", "init", moduleUrl)
 
@@ -220,10 +378,14 @@ func makeProjectDir() {
 	if exists(dir) {
 		contents, err2 := os.ReadDir(dir)
 		if len(contents) > 0 {
-			printlnC("{yellow}Warning: directory", dir, "already exists and is not empty{reset}")
-			answer := scanLine("Do you want to continue? (Y/N) ")
+			if onWarn == 0 {
+				printlnC("{yellow}Warning: directory", dir, "already exists and is not empty{reset}")
+				answer := scanLine("Do you want to continue? (Y/N) ")
 
-			if answer[0] != 'Y' && answer[0] != 'y' {
+				if answer[0] != 'Y' && answer[0] != 'y' {
+					os.Exit(0)
+				}
+			} else if onWarn == 2 {
 				os.Exit(0)
 			}
 		} else if err2 != nil {

@@ -14,5 +14,6 @@ or manualy:
  $ go build
 ```
 
-and run the executable. It is self explenatory and asks you questions.
-If you don't understand it, you shouldn't be programming.
+and run the executable. There are commandline-options which you can see with `--help`,
+but they are only reccomended for use in scripts. Just run the executable without options
+and you will be prompted.
